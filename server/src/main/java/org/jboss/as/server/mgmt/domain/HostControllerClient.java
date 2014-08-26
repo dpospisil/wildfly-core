@@ -120,6 +120,44 @@ public class HostControllerClient implements Closeable {
         }
     }
 
+    public ModelNode queryDomainMasterModel(ModelNode operation) {
+        try {
+            return channelHandler.executeRequest(new QueryDomainMasterModelRequest((operation)), null).getResult().get();
+        } catch (Exception e) {
+            //TODO
+        }
+        return null;
+    }
+
+    private static class QueryDomainMasterModelRequest extends AbstractManagementRequest<ModelNode, Void> {
+
+
+        private final ModelNode operation;
+
+        private QueryDomainMasterModelRequest(ModelNode operation) {
+            this.operation = operation;
+        }
+
+        @Override
+        protected void sendRequest(ActiveOperation.ResultHandler<ModelNode> resultHandler, ManagementRequestContext<Void> context, FlushableDataOutput output) throws IOException {
+            output.writeByte(DomainServerProtocol.PARAM_RESOURCE_PATH);
+            output.writeUTF(operation.toJSONString(false));
+        }
+
+        @Override
+        public byte getOperationType() {
+            return DomainServerProtocol.QUERY_MASTER_REQUEST;
+        }
+
+        @Override
+        public void handleRequest(DataInput input, ActiveOperation.ResultHandler<ModelNode> resultHandler, ManagementRequestContext<Void> context) throws IOException {
+            ModelNode result = new ModelNode();
+            result.readExternal(input);
+            resultHandler.done(result);
+        }
+
+    }
+
     private static class GetFileRequest extends AbstractManagementRequest<File, Void> {
         private final String hash;
         private final File localDeploymentFolder;

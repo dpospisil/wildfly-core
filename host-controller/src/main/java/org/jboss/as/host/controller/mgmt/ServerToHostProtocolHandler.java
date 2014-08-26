@@ -47,9 +47,13 @@ import org.jboss.as.controller.ProxyController;
 import org.jboss.as.controller.client.Operation;
 import org.jboss.as.controller.client.OperationBuilder;
 import org.jboss.as.controller.client.OperationMessageHandler;
+import org.jboss.as.controller.descriptions.ModelDescriptionConstants;
 import org.jboss.as.controller.registry.Resource;
 import org.jboss.as.domain.controller.DomainController;
+import org.jboss.as.domain.controller.LocalHostControllerInfo;
+import org.jboss.as.host.controller.DomainModelControllerService;
 import org.jboss.as.host.controller.ManagedServerOperationsFactory;
+import org.jboss.as.host.controller.MasterDomainControllerClient;
 import org.jboss.as.host.controller.ServerInventory;
 import org.jboss.as.host.controller.logging.HostControllerLogger;
 import org.jboss.as.protocol.StreamUtils;
@@ -127,6 +131,9 @@ public class ServerToHostProtocolHandler implements ManagementRequestHandlerFact
             case DomainServerProtocol.SERVER_STARTED_REQUEST:
                 handlers.registerActiveOperation(header.getBatchId(), serverInventory);
                 return new ServerStartedHandler(serverProcessName);
+            case DomainServerProtocol.QUERY_MASTER_REQUEST:
+                handlers.registerActiveOperation(header.getBatchId(), null);
+                return new QueryDomainMasterModelRequestHandler();
         }
         return handlers.resolveNext();
     }
@@ -246,6 +253,83 @@ public class ServerToHostProtocolHandler implements ManagementRequestHandlerFact
                 }
             });
         }
+    }
+
+    class QueryDomainMasterModelRequestHandler implements ManagementRequestHandler<Void, Void> {
+
+        @Override
+        public void handleRequest(DataInput input, final ActiveOperation.ResultHandler<Void> resultHandler, ManagementRequestContext<Void> context) throws IOException {
+
+            expectHeader(input, DomainServerProtocol.PARAM_RESOURCE_PATH);
+            final ModelNode operation = ModelNode.fromJSONString(input.readUTF());
+
+
+            ManagementRequestContext.AsyncTask<Void> task = new ManagementRequestContext.AsyncTask<Void>() {
+                @Override
+                public void execute(ManagementRequestContext<Void> context) throws Exception {
+                    final OperationStepHandler stepHandler = new QueryDomainMasterStepHandler();
+
+
+                    ModelNode result = operationExecutor.execute(Operation.Factory.create(operation), OperationMessageHandler.DISCARD, ModelController.OperationTransactionControl.COMMIT, stepHandler);
+
+                    if (ModelDescriptionConstants.SUCCESS.equals(result.get(ModelDescriptionConstants.OUTCOME).asString())) {
+                        result = result.get(ModelDescriptionConstants.RESULT);
+                    }
+
+                    final ManagementResponseHeader response = ManagementResponseHeader.create(context.getRequestHeader());
+                    final MessageOutputStream output = context.getChannel().writeMessage();
+                    final FlushableDataOutput foutput = ProtocolUtils.wrapAsDataOutput(output);
+                    try {
+                        response.write(foutput);
+                        result.writeExternal(foutput);
+                        foutput.flush();
+                        output.write(ManagementProtocol.RESPONSE_END);
+                        output.close();
+
+                        resultHandler.done(null);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        StreamUtils.safeClose(output);
+                    }
+
+
+                }
+            };
+
+            context.executeAsync(task);
+
+        }
+
+    }
+
+    class QueryDomainMasterStepHandler implements OperationStepHandler {
+
+        @Override
+        public void execute(OperationContext context, ModelNode operation) throws OperationFailedException {
+
+
+            LocalHostControllerInfo info =  domainController.getLocalHostInfo();
+
+            ModelNode result;
+
+            if (info.isMasterDomainController()) {
+                ModelController mc = (ModelController) context.getServiceRegistry(false).getRequiredService(DomainModelControllerService.SERVICE_NAME).getValue();
+                result  = mc.execute(Operation.Factory.create(operation), OperationMessageHandler.DISCARD, ModelController.OperationTransactionControl.COMMIT).getResponseNode();
+            } else {
+                final MasterDomainControllerClient masterDomainControllerClient = (MasterDomainControllerClient)
+                        context.getServiceRegistry(false).getRequiredService(MasterDomainControllerClient.SERVICE_NAME).getValue();
+                try {
+                    result = masterDomainControllerClient.execute(operation);
+                } catch (IOException ioe) {
+                    throw new OperationFailedException(ioe);
+                }
+
+            }
+            context.getResult().set(result);
+            context.stepCompleted();
+        }
+
     }
 
     /**

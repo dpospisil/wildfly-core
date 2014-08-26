@@ -31,6 +31,7 @@ public interface DomainServerProtocol {
     byte SERVER_STARTED_REQUEST = 0x02;
     byte SERVER_RECONNECT_REQUEST = 0x03;
 
+    byte QUERY_MASTER_REQUEST = 0x04;
 
     byte PARAM_SERVER_NAME = 0x01;
     byte PARAM_OK = 0x21;
@@ -46,4 +47,6 @@ public interface DomainServerProtocol {
     byte PARAM_FILE_SIZE = 0x31;
     byte FILE_END = 0x32;
     byte PARAM_ROOT_ID = 0x33;
+
+    byte PARAM_RESOURCE_PATH = 0x34;
 }
